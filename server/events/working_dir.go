@@ -57,6 +57,10 @@ type WorkingDir interface {
 	DeletePlan(logger logging.SimpleLogging, r models.Repo, p models.PullRequest, workspace string, path string, projectName string) error
 	// GetGitUntrackedFiles returns a list of Git untracked files in the working dir.
 	GetGitUntrackedFiles(logger logging.SimpleLogging, r models.Repo, p models.PullRequest, workspace string) ([]string, error)
+	// GetFileContents gets the contents of a file from a specific branch on the remote repository.
+	// Returns whether the file exists, the file contents, and any error.
+	// Uses git ls-remote to get the commit SHA and git show to retrieve the file without modifying the local repository.
+	GetFileContents(logger logging.SimpleLogging, r models.Repo, p models.PullRequest, file string, fetchRef string, workspace string) (bool, []byte, error)
 }
 
 // FileWorkspace implements WorkingDir with the file system.
@@ -279,27 +283,28 @@ func (w *FileWorkspace) forceClone(logger logging.SimpleLogging, c wrappedGitCon
 
 	// if branch strategy, use depth=1
 	if !w.CheckoutMerge {
-		return w.wrappedGit(logger, c, "clone", "--depth=1", "--branch", c.pr.HeadBranch, "--single-branch", headCloneURL, c.dir)
+		_, err := w.wrappedGit(logger, c, "clone", "--depth=1", "--branch", c.pr.HeadBranch, "--single-branch", headCloneURL, c.dir)
+		return err
 	}
 
 	// if merge strategy...
 
 	// if no checkout depth, omit depth arg
 	if w.CheckoutDepth == 0 {
-		if err := w.wrappedGit(logger, c, "clone", "--branch", c.pr.BaseBranch, "--single-branch", baseCloneURL, c.dir); err != nil {
+		if _, err := w.wrappedGit(logger, c, "clone", "--branch", c.pr.BaseBranch, "--single-branch", baseCloneURL, c.dir); err != nil {
 			return err
 		}
 	} else {
-		if err := w.wrappedGit(logger, c, "clone", "--depth", fmt.Sprint(w.CheckoutDepth), "--branch", c.pr.BaseBranch, "--single-branch", baseCloneURL, c.dir); err != nil {
+		if _, err := w.wrappedGit(logger, c, "clone", "--depth", fmt.Sprint(w.CheckoutDepth), "--branch", c.pr.BaseBranch, "--single-branch", baseCloneURL, c.dir); err != nil {
 			return err
 		}
 	}
 
-	if err := w.wrappedGit(logger, c, "remote", "add", "head", headCloneURL); err != nil {
+	if _, err := w.wrappedGit(logger, c, "remote", "add", "head", headCloneURL); err != nil {
 		return err
 	}
 	if w.GpgNoSigningEnabled {
-		if err := w.wrappedGit(logger, c, "config", "--local", "commit.gpgsign", "false"); err != nil {
+		if _, err := w.wrappedGit(logger, c, "config", "--local", "commit.gpgsign", "false"); err != nil {
 			return err
 		}
 	}
@@ -311,7 +316,7 @@ func (w *FileWorkspace) forceClone(logger logging.SimpleLogging, c wrappedGitCon
 // without deleting any existing plans
 func (w *FileWorkspace) mergeAgain(logger logging.SimpleLogging, c wrappedGitContext) error {
 	// Reset branch as if it was cloned again
-	if err := w.wrappedGit(logger, c, "reset", "--hard", fmt.Sprintf("refs/remotes/origin/%s", c.pr.BaseBranch)); err != nil {
+	if _, err := w.wrappedGit(logger, c, "reset", "--hard", fmt.Sprintf("refs/remotes/origin/%s", c.pr.BaseBranch)); err != nil {
 		return err
 	}
 
@@ -328,7 +333,7 @@ type wrappedGitContext struct {
 
 // wrappedGit runs git with additional environment settings required for git merge,
 // and with sanitized error logging to avoid leaking git credentials
-func (w *FileWorkspace) wrappedGit(logger logging.SimpleLogging, c wrappedGitContext, args ...string) error {
+func (w *FileWorkspace) wrappedGit(logger logging.SimpleLogging, c wrappedGitContext, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", args...) // nolint: gosec
 	cmd.Dir = c.dir
 	// The git merge command requires these env vars are set.
@@ -342,10 +347,10 @@ func (w *FileWorkspace) wrappedGit(logger logging.SimpleLogging, c wrappedGitCon
 	sanitizedOutput := w.sanitizeGitCredentials(string(output), c.pr.BaseRepo, c.head)
 	if err != nil {
 		sanitizedErrMsg := w.sanitizeGitCredentials(err.Error(), c.pr.BaseRepo, c.head)
-		return fmt.Errorf("running %s: %s: %s", cmdStr, sanitizedOutput, sanitizedErrMsg)
+		return nil, fmt.Errorf("running %s: %s: %s", cmdStr, sanitizedOutput, sanitizedErrMsg)
 	}
 	logger.Debug("ran: %s. Output: %s", cmdStr, strings.TrimSuffix(sanitizedOutput, "\n"))
-	return nil
+	return []byte(sanitizedOutput), nil
 }
 
 // Merge the PR into the base branch.
@@ -359,25 +364,25 @@ func (w *FileWorkspace) mergeToBaseBranch(logger logging.SimpleLogging, c wrappe
 
 	// if no checkout depth, omit depth arg
 	if w.CheckoutDepth == 0 {
-		if err := w.wrappedGit(logger, c, "fetch", fetchRemote, fetchRef); err != nil {
+		if _, err := w.wrappedGit(logger, c, "fetch", fetchRemote, fetchRef); err != nil {
 			return err
 		}
 	} else {
-		if err := w.wrappedGit(logger, c, "fetch", "--depth", fmt.Sprint(w.CheckoutDepth), fetchRemote, fetchRef); err != nil {
+		if _, err := w.wrappedGit(logger, c, "fetch", "--depth", fmt.Sprint(w.CheckoutDepth), fetchRemote, fetchRef); err != nil {
 			return err
 		}
 	}
 
-	if err := w.wrappedGit(logger, c, "merge-base", c.pr.BaseBranch, "FETCH_HEAD"); err != nil {
+	if _, err := w.wrappedGit(logger, c, "merge-base", c.pr.BaseBranch, "FETCH_HEAD"); err != nil {
 		// git merge-base returning error means that we did not receive enough commits in shallow clone.
 		// Fall back to retrieving full repo history.
-		if err := w.wrappedGit(logger, c, "fetch", "--unshallow"); err != nil {
+		if _, err := w.wrappedGit(logger, c, "fetch", "--unshallow"); err != nil {
 			return err
 		}
 
 		// fetch once more, otherwise `FETCH_HEAD` was reset to base when we ran
 		// fetch --unshallow
-		if err := w.wrappedGit(logger, c, "fetch", fetchRemote, fetchRef); err != nil {
+		if _, err := w.wrappedGit(logger, c, "fetch", fetchRemote, fetchRef); err != nil {
 			return err
 		}
 	}
@@ -388,7 +393,8 @@ func (w *FileWorkspace) mergeToBaseBranch(logger logging.SimpleLogging, c wrappe
 	// git rev-parse HEAD^2 to get the head commit because it will
 	// always succeed whereas without --no-ff, if the merge was fast
 	// forwarded then git rev-parse HEAD^2 would fail.
-	return w.wrappedGit(logger, c, "merge", "-q", "--no-ff", "-m", "atlantis-merge", "FETCH_HEAD")
+	_, err := w.wrappedGit(logger, c, "merge", "-q", "--no-ff", "-m", "atlantis-merge", "FETCH_HEAD")
+	return err
 }
 
 // GetWorkingDir returns the path to the workspace for this repo and pull.
@@ -469,4 +475,37 @@ func (w *FileWorkspace) GetGitUntrackedFiles(logger logging.SimpleLogging, r mod
 	untrackedFiles := strings.Split(string(output), "\n")[:]
 	logger.Debug("Untracked files: '%s'", strings.Join(untrackedFiles, ","))
 	return untrackedFiles, nil
+}
+
+func (w *FileWorkspace) GetFileContents(logger logging.SimpleLogging, r models.Repo, p models.PullRequest, file string, fetchRef string, workspace string) (bool, []byte, error) {
+	cloneDir := w.cloneDir(p.BaseRepo, p, workspace)
+	c := wrappedGitContext{cloneDir, r, p}
+
+	// Get the commit SHA for the branch we want without fetching
+	lsRemoteOutput, err := w.wrappedGit(logger, c, "ls-remote", "origin", fetchRef)
+	if err != nil {
+		return false, nil, err
+	}
+
+	// Parse the commit SHA from ls-remote output (format: "SHA\trefs/heads/branch")
+	lines := strings.Split(strings.TrimSpace(string(lsRemoteOutput)), "\n")
+	if len(lines) == 0 {
+		return false, nil, fmt.Errorf("no output from git ls-remote for branch %s", fetchRef)
+	}
+	commitSHA := strings.Fields(lines[0])[0]
+
+	// Get file contents using git show with the specific commit SHA
+	showObject := fmt.Sprintf("%s:%s", commitSHA, file)
+	fileContents, err := w.wrappedGit(logger, c, "show", showObject)
+
+	if err != nil {
+		// Check if the error is because the file doesn't exist
+		notFoundString := fmt.Sprintf("path '%s' does not exist in '%s'", file, commitSHA)
+		if strings.Contains(err.Error(), notFoundString) {
+			return false, nil, nil
+		}
+		return false, nil, err
+	}
+
+	return true, fileContents, nil
 }
