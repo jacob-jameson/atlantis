@@ -40,6 +40,7 @@ type Project struct {
 	PolicyCheck               *bool      `yaml:"policy_check,omitempty"`
 	CustomPolicyCheck         *bool      `yaml:"custom_policy_check,omitempty"`
 	SilencePRComments         []string   `yaml:"silence_pr_comments,omitempty"`
+	ConfigBranch              string     `yaml:"config_branch,omitempty"`
 }
 
 func (p Project) Validate() error {
@@ -95,6 +96,7 @@ func (p Project) Validate() error {
 		validation.Field(&p.DependsOn, validation.By(DependsOn)),
 		validation.Field(&p.Name, validation.By(validName)),
 		validation.Field(&p.Branch, validation.By(branchValid)),
+		validation.Field(&p.ConfigBranch, validation.By(validConfigBranch)),
 	)
 }
 
@@ -130,6 +132,13 @@ func (p Project) ToValid() valid.Project {
 		v.Autoplan = DefaultAutoPlan()
 	} else {
 		v.Autoplan = p.Autoplan.ToValid()
+	}
+
+	configBranch := "head"
+	if p.ConfigBranch != "" {
+		v.ConfigBranch = p.ConfigBranch
+	} else {
+		v.ConfigBranch = configBranch
 	}
 
 	// There are no default apply/import requirements.
@@ -217,4 +226,25 @@ func validDistribution(value interface{}) error {
 		return fmt.Errorf("'%s' is not a valid terraform_distribution, only '%s' and '%s' are supported", *distribution, "terraform", "opentofu")
 	}
 	return nil
+}
+
+func validConfigBranch(value interface{}) error {
+	branch := value.(string)
+
+	// If empty string, it's valid (will default to "head" later)
+	if branch == "" {
+		return nil
+	}
+
+	// Define allowed values for config branch
+	validBranches := []string{"head", "default"}
+
+	// Check if branch is in the list of valid branches
+	for _, validBranch := range validBranches {
+		if branch == validBranch {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("'%s' is not a valid config_branch, only 'head' and 'default' are supported", branch)
 }

@@ -41,6 +41,8 @@ type Repo struct {
 	CustomPolicyCheck         *bool          `yaml:"custom_policy_check,omitempty" json:"custom_policy_check,omitempty"`
 	AutoDiscover              *AutoDiscover  `yaml:"autodiscover,omitempty" json:"autodiscover,omitempty"`
 	SilencePRComments         []string       `yaml:"silence_pr_comments,omitempty" json:"silence_pr_comments,omitempty"`
+	DefaultBranch             string         `yaml:"default_branch,omitempty" json:"default_branch,omitempty"`
+	ConfigBranch              string         `yaml:"config_branch,omitempty" json:"config_branch,omitempty"`
 }
 
 func (g GlobalCfg) Validate() error {
@@ -223,7 +225,7 @@ func (r Repo) Validate() error {
 	overridesValid := func(value interface{}) error {
 		overrides := value.([]string)
 		for _, o := range overrides {
-			if o != valid.PlanRequirementsKey && o != valid.ApplyRequirementsKey && o != valid.ImportRequirementsKey && o != valid.WorkflowKey && o != valid.DeleteSourceBranchOnMergeKey && o != valid.RepoLockingKey && o != valid.RepoLocksKey && o != valid.PolicyCheckKey && o != valid.CustomPolicyCheckKey && o != valid.SilencePRCommentsKey {
+			if o != valid.PlanRequirementsKey && o != valid.ApplyRequirementsKey && o != valid.ImportRequirementsKey && o != valid.WorkflowKey && o != valid.DeleteSourceBranchOnMergeKey && o != valid.RepoLockingKey && o != valid.RepoLocksKey && o != valid.PolicyCheckKey && o != valid.CustomPolicyCheckKey && o != valid.SilencePRCommentsKey && o != valid.ConfigBranchKey {
 				return fmt.Errorf("%q is not a valid override, only %q, %q, %q, %q, %q, %q, %q, %q, %q, and %q are supported", o, valid.PlanRequirementsKey, valid.ApplyRequirementsKey, valid.ImportRequirementsKey, valid.WorkflowKey, valid.DeleteSourceBranchOnMergeKey, valid.RepoLockingKey, valid.RepoLocksKey, valid.PolicyCheckKey, valid.CustomPolicyCheckKey, valid.SilencePRCommentsKey)
 			}
 		}
@@ -373,6 +375,17 @@ OuterGlobalImportReqs:
 		repoLocks = r.RepoLocks.ToValid()
 	}
 
+	// Set default values for ConfigBranch
+	configBranch := r.ConfigBranch
+	if configBranch == "" {
+		configBranch = DefaultConfigBranch
+	}
+	// Set default values for DefaultBranch
+	defaultBranch := r.DefaultBranch
+	if defaultBranch == "" {
+		defaultBranch = DefaultDefaultBranch
+	}
+
 	return valid.Repo{
 		ID:                        id,
 		IDRegex:                   idRegex,
@@ -394,5 +407,7 @@ OuterGlobalImportReqs:
 		CustomPolicyCheck:         r.CustomPolicyCheck,
 		AutoDiscover:              autoDiscover,
 		SilencePRComments:         r.SilencePRComments,
+		DefaultBranch:             defaultBranch,
+		ConfigBranch:              configBranch,
 	}
 }

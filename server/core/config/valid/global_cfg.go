@@ -28,6 +28,7 @@ const PolicyCheckKey = "policy_check"
 const CustomPolicyCheckKey = "custom_policy_check"
 const AutoDiscoverKey = "autodiscover"
 const SilencePRCommentsKey = "silence_pr_comments"
+const ConfigBranchKey = "config_branch"
 
 var AllowedSilencePRComments = []string{"plan", "apply"}
 
@@ -90,6 +91,8 @@ type Repo struct {
 	CustomPolicyCheck         *bool
 	AutoDiscover              *AutoDiscover
 	SilencePRComments         []string
+	DefaultBranch             string
+	ConfigBranch              string
 }
 
 type MergedProjectCfg struct {
@@ -115,6 +118,7 @@ type MergedProjectCfg struct {
 	PolicyCheck               bool
 	CustomPolicyCheck         bool
 	SilencePRComments         []string
+	ConfigBranch              string
 }
 
 // WorkflowHook is a map of custom run commands to run before or after workflows.
@@ -247,6 +251,8 @@ func NewGlobalCfgFromArgs(args GlobalCfgArgs) GlobalCfg {
 				CustomPolicyCheck:         &customPolicyCheck,
 				AutoDiscover:              &autoDiscover,
 				SilencePRComments:         silencePRComments,
+				DefaultBranch:             "main",
+				ConfigBranch:              "head",
 			},
 		},
 		Workflows: map[string]Workflow{
@@ -286,7 +292,7 @@ func (r Repo) IDString() string {
 // final config. It assumes that all configs have been validated.
 func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, proj Project, rCfg RepoCfg) MergedProjectCfg {
 	log.Debug("MergeProjectCfg started")
-	planReqs, applyReqs, importReqs, workflow, allowedOverrides, allowCustomWorkflows, deleteSourceBranchOnMerge, repoLocks, policyCheck, customPolicyCheck, _, silencePRComments := g.getMatchingCfg(log, repoID)
+	planReqs, applyReqs, importReqs, workflow, allowedOverrides, allowCustomWorkflows, deleteSourceBranchOnMerge, repoLocks, policyCheck, customPolicyCheck, _, silencePRComments, configBranch := g.getMatchingCfg(log, repoID)
 	// If repos are allowed to override certain keys then override them.
 	for _, key := range allowedOverrides {
 		switch key {
@@ -387,11 +393,19 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 				log.Debug("overriding server-defined %s with repo settings: [%s]", SilencePRCommentsKey, strings.Join(rCfg.SilencePRComments, ","))
 				silencePRComments = rCfg.SilencePRComments
 			}
+		case ConfigBranchKey:
+			if proj.ConfigBranch != "" {
+				log.Debug("overriding repo-root-defined %s with repo settings: [%s]", ConfigBranchKey, proj.ConfigBranch)
+				configBranch = proj.ConfigBranch
+			} else if rCfg.ConfigBranch != "" {
+				log.Debug("overriding server-defined %s with repo settings: [%s]", ConfigBranchKey, rCfg.ConfigBranch)
+				configBranch = rCfg.ConfigBranch
+			}
 		}
 		log.Debug("MergeProjectCfg completed")
 	}
 
-	log.Debug("final settings: %s: [%s], %s: [%s], %s: [%s], %s: %s, %s: %t, %s: %s, %s: %t, %s: %t, %s: [%s]",
+	log.Debug("final settings: %s: [%s], %s: [%s], %s: [%s], %s: %s, %s: %t, %s: %s, %s: %t, %s: %t, %s: [%s], %s: %s",
 		PlanRequirementsKey, strings.Join(planReqs, ","),
 		ApplyRequirementsKey, strings.Join(applyReqs, ","),
 		ImportRequirementsKey, strings.Join(importReqs, ","),
@@ -401,6 +415,7 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 		PolicyCheckKey, policyCheck,
 		CustomPolicyCheckKey, policyCheck,
 		SilencePRCommentsKey, strings.Join(silencePRComments, ","),
+		ConfigBranchKey, configBranch,
 	)
 
 	return MergedProjectCfg{
@@ -423,6 +438,7 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 		PolicyCheck:               policyCheck,
 		CustomPolicyCheck:         customPolicyCheck,
 		SilencePRComments:         silencePRComments,
+		ConfigBranch:              configBranch,
 	}
 }
 
@@ -430,7 +446,7 @@ func (g GlobalCfg) MergeProjectCfg(log logging.SimpleLogging, repoID string, pro
 // repo with id repoID. It is used when there is no repo config.
 func (g GlobalCfg) DefaultProjCfg(log logging.SimpleLogging, repoID string, repoRelDir string, workspace string) MergedProjectCfg {
 	log.Debug("building config based on server-side config")
-	planReqs, applyReqs, importReqs, workflow, _, _, deleteSourceBranchOnMerge, repoLocks, policyCheck, customPolicyCheck, _, silencePRComments := g.getMatchingCfg(log, repoID)
+	planReqs, applyReqs, importReqs, workflow, _, _, deleteSourceBranchOnMerge, repoLocks, policyCheck, customPolicyCheck, _, silencePRComments, configBranch := g.getMatchingCfg(log, repoID)
 	return MergedProjectCfg{
 		PlanRequirements:          planReqs,
 		ApplyRequirements:         applyReqs,
@@ -448,6 +464,7 @@ func (g GlobalCfg) DefaultProjCfg(log logging.SimpleLogging, repoID string, repo
 		PolicyCheck:               policyCheck,
 		CustomPolicyCheck:         customPolicyCheck,
 		SilencePRComments:         silencePRComments,
+		ConfigBranch:              configBranch,
 	}
 }
 
@@ -484,6 +501,7 @@ func (g GlobalCfg) ValidateRepoCfg(rCfg RepoCfg, repoID string) error {
 		}
 	}
 	for _, p := range rCfg.Projects {
+		// TODO: This could probably do with a refactor to make it more dynamic
 		if p.WorkflowName != nil && !utils.SlicesContains(allowedOverrides, WorkflowKey) {
 			return fmt.Errorf("repo config not allowed to set '%s' key: server-side config needs '%s: [%s]'", WorkflowKey, AllowedOverridesKey, WorkflowKey)
 		}
@@ -507,6 +525,9 @@ func (g GlobalCfg) ValidateRepoCfg(rCfg RepoCfg, repoID string) error {
 		}
 		if p.CustomPolicyCheck != nil && !utils.SlicesContains(allowedOverrides, CustomPolicyCheckKey) {
 			return fmt.Errorf("repo config not allowed to set '%s' key: server-side config needs '%s: [%s]'", CustomPolicyCheckKey, AllowedOverridesKey, CustomPolicyCheckKey)
+		}
+		if p.ConfigBranch != "" && !utils.SlicesContains(allowedOverrides, ConfigBranchKey) {
+			return fmt.Errorf("repo config not allowed to set '%s' key: server-side config needs '%s: [%s]'", ConfigBranchKey, AllowedOverridesKey, ConfigBranchKey)
 		}
 		if p.SilencePRComments != nil {
 			if !utils.SlicesContains(allowedOverrides, SilencePRCommentsKey) {
@@ -586,7 +607,7 @@ func (g GlobalCfg) ValidateRepoCfg(rCfg RepoCfg, repoID string) error {
 }
 
 // getMatchingCfg returns the key settings for repoID.
-func (g GlobalCfg) getMatchingCfg(log logging.SimpleLogging, repoID string) (planReqs []string, applyReqs []string, importReqs []string, workflow Workflow, allowedOverrides []string, allowCustomWorkflows bool, deleteSourceBranchOnMerge bool, repoLocks RepoLocks, policyCheck bool, customPolicyCheck bool, autoDiscover AutoDiscover, silencePRComments []string) {
+func (g GlobalCfg) getMatchingCfg(log logging.SimpleLogging, repoID string) (planReqs []string, applyReqs []string, importReqs []string, workflow Workflow, allowedOverrides []string, allowCustomWorkflows bool, deleteSourceBranchOnMerge bool, repoLocks RepoLocks, policyCheck bool, customPolicyCheck bool, autoDiscover AutoDiscover, silencePRComments []string, configBranch string) {
 	toLog := make(map[string]string)
 	traceF := func(repoIdx int, repoID string, key string, val interface{}) string {
 		from := "default server config"
@@ -681,6 +702,11 @@ func (g GlobalCfg) getMatchingCfg(log logging.SimpleLogging, repoID string) (pla
 					if repo.SilencePRComments != nil {
 						toLog[SilencePRCommentsKey] = traceF(i, repo.IDString(), SilencePRCommentsKey, repo.SilencePRComments)
 						silencePRComments = repo.SilencePRComments
+					}
+				case ConfigBranchKey:
+					if repo.ConfigBranch != "" {
+						toLog[ConfigBranchKey] = traceF(i, repo.IDString(), ConfigBranchKey, repo.ConfigBranch)
+						configBranch = repo.ConfigBranch
 					}
 				}
 			}

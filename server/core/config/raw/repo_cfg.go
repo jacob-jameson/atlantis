@@ -13,6 +13,12 @@ const DefaultEmojiReaction = ""
 // DefaultAbortOnExecutionOrderFail being false is the default setting for abort on execution group failures
 const DefaultAbortOnExecutionOrderFail = false
 
+// Default ConfigBranch being head will retain historical default behaviour (using headBranch config file)
+const DefaultConfigBranch = "head"
+
+// Default DefaultBranch being main is the most common default branch name
+const DefaultDefaultBranch = "main"
+
 // RepoCfg is the raw schema for repo-level atlantis.yaml config.
 type RepoCfg struct {
 	Version                   *int                `yaml:"version,omitempty"`
@@ -29,6 +35,7 @@ type RepoCfg struct {
 	AbortOnExecutionOrderFail *bool               `yaml:"abort_on_execution_order_fail,omitempty"`
 	RepoLocks                 *RepoLocks          `yaml:"repo_locks,omitempty"`
 	SilencePRComments         []string            `yaml:"silence_pr_comments,omitempty"`
+	ConfigBranch              string              `yaml:"config_branch,omitempty"`
 }
 
 func (r RepoCfg) Validate() error {
@@ -83,6 +90,12 @@ func (r RepoCfg) ToValid() valid.RepoCfg {
 	if r.RepoLocks != nil {
 		repoLocks = r.RepoLocks.ToValid()
 	}
+
+	var ConfigBranch = DefaultConfigBranch
+	if r.ConfigBranch != "" {
+		ConfigBranch = r.ConfigBranch
+	}
+
 	return valid.RepoCfg{
 		Version:                   *r.Version,
 		Projects:                  validProjects,
@@ -98,5 +111,6 @@ func (r RepoCfg) ToValid() valid.RepoCfg {
 		AbortOnExecutionOrderFail: abortOnExecutionOrderFail,
 		RepoLocks:                 repoLocks,
 		SilencePRComments:         r.SilencePRComments,
+		ConfigBranch:              ConfigBranch,
 	}
 }

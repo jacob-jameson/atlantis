@@ -72,6 +72,7 @@ const (
 	CheckoutStrategyFlag             = "checkout-strategy"
 	ConfigFlag                       = "config"
 	DataDirFlag                      = "data-dir"
+	DefaultBranchFlag                = "default-branch"
 	DefaultTFDistributionFlag        = "default-tf-distribution"
 	DefaultTFVersionFlag             = "default-tf-version"
 	DisableApplyAllFlag              = "disable-apply-all"
@@ -168,6 +169,7 @@ const (
 	DefaultAutoDiscoverMode             = "auto"
 	DefaultAutoplanFileList             = "**/*.tf,**/*.tfvars,**/*.tfvars.json,**/terragrunt.hcl,**/.terraform.lock.hcl"
 	DefaultAllowCommands                = "version,plan,apply,unlock,approve_policies"
+	DefaultBranch                       = "main"
 	DefaultCheckoutStrategy             = CheckoutStrategyBranch
 	DefaultCheckoutDepth                = 0
 	DefaultBitbucketBaseURL             = bitbucketcloud.BaseURL
@@ -451,6 +453,11 @@ var stringFlags = map[string]stringFlag{
 		description: "API token for Terraform Cloud/Enterprise. This will be used to generate a ~/.terraformrc file." +
 			" Only set if using TFC/E as a remote backend." +
 			" Should be specified via the ATLANTIS_TFE_TOKEN environment variable for security.",
+	},
+	DefaultBranchFlag: {
+		description: "Git branch to view as the default branch of your repositories." +
+			"This is mainly used to read the atlantis.yaml file from a location that isn't controlled by the pull request raiser.",
+		defaultValue: DefaultBranch,
 	},
 	DefaultTFDistributionFlag: {
 		description:  fmt.Sprintf("Which TF distribution to use. Can be set to %s or %s.", TFDistributionTerraform, TFDistributionOpenTofu),
